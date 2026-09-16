@@ -11,30 +11,64 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Prepare Android project
+      - name: Extract project ZIP
         shell: bash
         run: |
-          set -euxo pipefail
+          set -e
 
-          mkdir -p project
+          ZIP_FILE="$(find . -maxdepth 3 -type f -iname '*.zip' | head -n 1)"
 
-          echo "Files in repository:"
-          find . -maxdepth 3 -type f | sort | head -200
-
-          ZIP_FILE="$(find . -type f -iname '*.zip' -print -quit || true)"
-
-          if [ -n "$ZIP_FILE" ]; then
-            echo "ZIP found: $ZIP_FILE"
-            unzip -o "$ZIP_FILE" -d project
-          else
-            echo "No ZIP found. Checking repository directly..."
-            cp -R . project/direct 2>/dev/null || true
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Project ZIP not found"
+            exit 1
           fi
 
-          echo "Searching for Gradle project..."
+          echo "Using ZIP: $ZIP_FILE"
 
-          GRADLEW="$(find project -type f -name 'gradlew' -print -quit || true)"
+          rm -rf project
+          mkdir project
 
+          unzip -q "$ZIP_FILE" -d project
+
+          echo "Searching for gradlew..."
+          GRADLEW="$(find project -type f -name gradlew -print -quit)"
+
+          if [ -z "$GRADLEW" ]; then
+            echo "ERROR: gradlew not found inside ZIP"
+            echo "ZIP contents:"
+            find project -maxdepth 5 -type f | head -100
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$GRADLEW")"
+
+          echo "Project directory: $PROJECT_DIR"
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Make Gradle executable
+        run: chmod +x "$PROJECT_DIR/gradlew"
+
+      - name: Build Debug APK
+        run: |
+          cd "$PROJECT_DIR"
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Find APK
+        run: |
+          find "$PROJECT_DIR" -type f -name "*.apk" -print
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: OfflineVideoEditor-APK
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
           if [ -z "$GRADLEW" ]; then
             echo "ERROR: gradlew was not found."
             echo "Project contents:"
