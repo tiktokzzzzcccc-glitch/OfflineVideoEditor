@@ -1,0 +1,56 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find and extract project ZIP
+        shell: bash
+        run: |
+          set -e
+          mkdir -p project
+          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Project ZIP not found"
+            exit 1
+          fi
+
+          echo "Using ZIP: $ZIP_FILE"
+          unzip -q "$ZIP_FILE" -d project
+
+          ROOT=$(find project -name gradlew -type f -print -quit | xargs -r dirname)
+
+          if [ -z "$ROOT" ]; then
+            echo "ERROR: gradlew not found"
+            exit 1
+          fi
+
+          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Make Gradle executable
+        run: chmod +x "$PROJECT_ROOT/gradlew"
+
+      - name: Build Debug APK
+        working-directory: ${{ env.PROJECT_ROOT }}
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: OfflineVideoEditor-APK
+          path: |
+            ${{ env.PROJECT_ROOT }}/app/build/outputs/apk/debug/*.apk
