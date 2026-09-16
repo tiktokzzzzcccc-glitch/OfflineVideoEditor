@@ -11,46 +11,67 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and extract project ZIP
+      - name: Prepare Android project
         shell: bash
         run: |
-          set -e
+          set -euxo pipefail
+
           mkdir -p project
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
 
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found"
+          echo "Files in repository:"
+          find . -maxdepth 3 -type f | sort | head -200
+
+          ZIP_FILE="$(find . -type f -iname '*.zip' -print -quit || true)"
+
+          if [ -n "$ZIP_FILE" ]; then
+            echo "ZIP found: $ZIP_FILE"
+            unzip -o "$ZIP_FILE" -d project
+          else
+            echo "No ZIP found. Checking repository directly..."
+            cp -R . project/direct 2>/dev/null || true
+          fi
+
+          echo "Searching for Gradle project..."
+
+          GRADLEW="$(find project -type f -name 'gradlew' -print -quit || true)"
+
+          if [ -z "$GRADLEW" ]; then
+            echo "ERROR: gradlew was not found."
+            echo "Project contents:"
+            find project -maxdepth 4 -type f | sort | head -300
             exit 1
           fi
 
-          echo "Using ZIP: $ZIP_FILE"
-          unzip -q "$ZIP_FILE" -d project
+          PROJECT_DIR="$(dirname "$GRADLEW")"
 
-          ROOT=$(find project -name gradlew -type f -print -quit | xargs -r dirname)
+          echo "Android project found at:"
+          echo "$PROJECT_DIR"
 
-          if [ -z "$ROOT" ]; then
-            echo "ERROR: gradlew not found"
-            exit 1
-          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "PROJECT_ROOT=$ROOT" >> "$GITHUB_ENV"
-
-      - name: Set up Java
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Make Gradle executable
-        run: chmod +x "$PROJECT_ROOT/gradlew"
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Debug APK
-        working-directory: ${{ env.PROJECT_ROOT }}
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Build APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cd "$PROJECT_DIR"
+
+          chmod +x gradlew
+
+          ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: OfflineVideoEditor-APK
-          path: |
-            ${{ env.PROJECT_ROOT }}/app/build/outputs/apk/debug/*.apk
+          path: '**/build/outputs/apk/debug/*.apk'
+          if-no-files-found: error
